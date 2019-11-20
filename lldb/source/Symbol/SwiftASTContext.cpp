@@ -4065,6 +4065,10 @@ bool SwiftASTContext::LoadLibraryUsingPaths(
   FileSpec found_library;
   uint32_t token = LLDB_INVALID_IMAGE_TOKEN;
   Status error;
+  llvm::errs() << "SwiftASTContext::LoadLibraryUsingPaths, search paths: "
+               << uniqued_paths.size() << "\n";
+  for (auto path : uniqued_paths)
+    llvm::errs() << path << "\n";
   if (platform_sp)
     token = platform_sp->LoadImageUsingPaths(
         &process, library_spec, uniqued_paths, error, &found_library);

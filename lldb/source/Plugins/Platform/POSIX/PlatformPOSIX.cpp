@@ -628,6 +628,7 @@ Status PlatformPOSIX::EvaluateLibdlExpression(
 std::unique_ptr<UtilityFunction>
 PlatformPOSIX::MakeLoadImageUtilityFunction(ExecutionContext &exe_ctx,
                                             Status &error) {
+  llvm::errs() << "PlatformPOSIX::MakeLoadImageUtilityFunction\n";
   // Remember to prepend this with the prefix from
   // GetLibdlFunctionDeclarations. The returned values are all in
   // __lldb_dlopen_result for consistency. The wrapper returns a void * but
@@ -641,7 +642,7 @@ PlatformPOSIX::MakeLoadImageUtilityFunction(ExecutionContext &exe_ctx,
   
   extern void *memcpy(void *, const void *, size_t size);
   extern size_t strlen(const char *);
-  
+  extern int printf(const char *, ...);
 
   void * __lldb_dlopen_wrapper (const char *name, 
                                 const char *path_strings,
@@ -664,12 +665,24 @@ PlatformPOSIX::MakeLoadImageUtilityFunction(ExecutionContext &exe_ctx,
       buffer[path_len] = '/';
       char *target_ptr = buffer+path_len+1; 
       memcpy((void *) target_ptr, (void *) name, name_len + 1);
+      printf("buffer: '%s'\n", buffer);
       result_ptr->image_ptr = dlopen(buffer, 2);
       if (result_ptr->image_ptr) {
         result_ptr->error_str = nullptr;
         break;
       }
+      // The `dlerror()` string for the first error is:
+      // ```
+      // swift-build/swift/swift-nightly-install/Library/Developer/Toolchains/swift-tensorflow-LOCAL-2019-11-20-a.xctoolchain/System/Library/PrivateFrameworks/LLDB.framework/Resources/Swift/macosx/libswiftTensorFlow.dylib, 2): Library not loaded: @rpath/libswiftPython.dylib
+      // Referenced from: swift-build/swift/swift-nightly-install/Library/Developer/Toolchains/swift-tensorflow-LOCAL-2019-11-20-a.xctoolchain/System/Library/PrivateFrameworks/LLDB.framework/Resources/Swift/macosx/libswiftTensorFlow.dylib
+      // Reason: image not found
+      // ```
+      // The second error is always:
+      // ```
+      // /usr/lib/swift/libswiftTensorFlow.dylib, 2): image not found
+      // ```
       result_ptr->error_str = dlerror();
+      printf("dlerror: '%s'\n", result_ptr->error_str);
       path_strings = path_strings + path_len + 1;
     }
     return nullptr;
@@ -692,12 +705,14 @@ PlatformPOSIX::MakeLoadImageUtilityFunction(ExecutionContext &exe_ctx,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not make utility"
                                    "function: %s", utility_error.AsCString());
+    llvm::errs() << "ERROR 1\n";
     return nullptr;
   }
   if (!dlopen_utility_func_up->Install(diagnostics, exe_ctx)) {
     error.SetErrorStringWithFormat("dlopen error: could not install utility"
                                    "function: %s", 
                                    diagnostics.GetString().c_str());
+    llvm::errs() << "ERROR 2: " << diagnostics.GetString() << "\n";
     return nullptr;
   }
 
@@ -729,12 +744,14 @@ PlatformPOSIX::MakeLoadImageUtilityFunction(ExecutionContext &exe_ctx,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not make function"
                                    "caller: %s", utility_error.AsCString());
+    llvm::errs() << "ERROR 3\n";
     return nullptr;
   }
   
   do_dlopen_function = dlopen_utility_func_up->GetFunctionCaller();
   if (!do_dlopen_function) {
     error.SetErrorString("dlopen error: could not get function caller.");
+    llvm::errs() << "ERROR 4\n";
     return nullptr;
   }
   
@@ -756,6 +773,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   ThreadSP thread_sp = process->GetThreadList().GetExpressionExecutionThread();
   if (!thread_sp) {
     error.SetErrorString("dlopen error: no thread available to call dlopen.");
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -776,12 +794,15 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
         return MakeLoadImageUtilityFunction(exe_ctx, error);
       });
   // If we couldn't make it, the error will be in error, so we can exit here.
-  if (!dlopen_utility_func)
+  if (!dlopen_utility_func) {
+    llvm::errs() << "Error: !dlopen_utility_func\n";
     return LLDB_INVALID_IMAGE_TOKEN;
+  }
     
   do_dlopen_function = dlopen_utility_func->GetFunctionCaller();
   if (!do_dlopen_function) {
     error.SetErrorString("dlopen error: could not get function caller.");
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   arguments = do_dlopen_function->GetArgumentValues();
@@ -790,12 +811,16 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   // target.
   uint32_t permissions = ePermissionsReadable|ePermissionsWritable;
   size_t path_len = path.size() + 1;
+
+  llvm::errs() << "PlatformPOSIX::DoLoadImage, path: " << path << "\n";
+
   lldb::addr_t path_addr = process->AllocateMemory(path_len, 
                                                    permissions,
                                                    utility_error);
   if (path_addr == LLDB_INVALID_ADDRESS) {
     error.SetErrorStringWithFormat("dlopen error: could not allocate memory"
                                     "for path: %s", utility_error.AsCString());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -808,6 +833,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not write path string:"
                                     " %s", utility_error.AsCString());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -820,6 +846,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not allocate memory"
                                     "for path: %s", utility_error.AsCString());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -881,6 +908,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
     if (utility_error.Fail()) {
       error.SetErrorStringWithFormat("dlopen error: could not write path array:"
                                      " %s", utility_error.AsCString());
+      llvm::errs() << error.AsCString() << "\n";
       return LLDB_INVALID_IMAGE_TOKEN;
     }
     // Now make spaces in the target for the buffer.  We need to add one for
@@ -894,6 +922,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
       error.SetErrorStringWithFormat("dlopen error: could not allocate memory"
                                       "for buffer: %s", 
                                       utility_error.AsCString());
+      llvm::errs() << error.AsCString() << "\n";
       return LLDB_INVALID_IMAGE_TOKEN;
     }
   
@@ -918,6 +947,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
     error.SetErrorStringWithFormat("dlopen error: could not write function "
                                    "arguments: %s", 
                                    diagnostics.GetString().c_str());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -954,6 +984,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
     error.SetErrorStringWithFormat("dlopen error: failed executing "
                                    "dlopen wrapper function: %s", 
                                    diagnostics.GetString().c_str());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -963,6 +994,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not read the return "
                                     "struct: %s", utility_error.AsCString());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -987,6 +1019,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   if (utility_error.Fail()) {
     error.SetErrorStringWithFormat("dlopen error: could not read error string: "
                                     "%s", utility_error.AsCString());
+    llvm::errs() << error.AsCString() << "\n";
     return LLDB_INVALID_IMAGE_TOKEN;
   }
   
@@ -999,6 +1032,7 @@ uint32_t PlatformPOSIX::DoLoadImage(lldb_private::Process *process,
   else
     error.SetErrorStringWithFormat("dlopen failed for unknown reasons.");
 
+  llvm::errs() << error.AsCString() << "\n";
   return LLDB_INVALID_IMAGE_TOKEN;
 }
 

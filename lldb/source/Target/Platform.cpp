@@ -1746,6 +1746,7 @@ uint32_t Platform::LoadImageUsingPaths(lldb_private::Process *process,
                                lldb_private::Status &error,
                                lldb_private::FileSpec *loaded_path)
 {
+  llvm::errs() << "Platform::LoadImageUsingPaths: " << remote_filename.GetPath() << "\n";
   FileSpec file_to_use;
   if (remote_filename.IsAbsolute())
     file_to_use = FileSpec(remote_filename.GetFilename().GetStringRef(),
